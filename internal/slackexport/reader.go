@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"golang.org/x/text/encoding/charmap"
 )
@@ -22,6 +23,10 @@ type Export struct {
 
 	usersByID map[string]*User
 	chanByID  map[string]*Channel
+
+	timesMu sync.Mutex
+	// times holds each channel's message timestamps from its last read.
+	times map[string][]TS
 }
 
 // Open loads the workspace metadata from an export directory. If mediaDir is
@@ -30,7 +35,7 @@ func Open(dir, mediaDir string) (*Export, error) {
 	if mediaDir == "" {
 		mediaDir = filepath.Join(dir, "media")
 	}
-	e := &Export{Dir: dir, MediaDir: mediaDir}
+	e := &Export{Dir: dir, MediaDir: mediaDir, times: map[string][]TS{}}
 	if err := readJSON(filepath.Join(dir, "users.json"), &e.Users); err != nil {
 		return nil, err
 	}
@@ -126,7 +131,29 @@ func (e *Export) Messages(c *Channel) ([]*Message, error) {
 		}
 	}
 	sort.SliceStable(msgs, func(i, j int) bool { return msgs[i].TS.Less(msgs[j].TS) })
+	times := make([]TS, len(msgs))
+	for i, m := range msgs {
+		times[i] = m.TS
+	}
+	e.timesMu.Lock()
+	e.times[c.ID] = times
+	e.timesMu.Unlock()
 	return msgs, nil
+}
+
+// Times returns the timestamps of a channel's messages in order. It is cheap
+// once the channel has been read with Messages.
+func (e *Export) Times(c *Channel) ([]TS, error) {
+	e.timesMu.Lock()
+	times, ok := e.times[c.ID]
+	e.timesMu.Unlock()
+	if ok {
+		return times, nil
+	}
+	if _, err := e.Messages(c); err != nil {
+		return nil, err
+	}
+	return e.Times(c)
 }
 
 // ChannelSize returns the total size of a channel's day files, a cheap proxy

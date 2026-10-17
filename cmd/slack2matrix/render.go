@@ -38,6 +38,10 @@ func (r *exportResolver) Channel(slackID string) (string, id.RoomID) {
 	return c.Name, room
 }
 
+// Message implements convert.Resolver. Nothing has been imported when
+// rendering offline, so message links fall back to room links.
+func (r *exportResolver) Message(string, string) id.EventID { return "" }
+
 // loadTransformer opens the export and builds the directory and transformer.
 func loadTransformer(cfg *config.Config) (*slackexport.Export, *directory.Directory, *transform.Transformer, *exportResolver, error) {
 	exp, err := slackexport.Open(cfg.ExportDir, cfg.MediaDir)

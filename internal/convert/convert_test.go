@@ -29,6 +29,13 @@ func (fakeResolver) Channel(slackID string) (string, id.RoomID) {
 	return "", ""
 }
 
+func (fakeResolver) Message(channelID, ts string) id.EventID {
+	if channelID == "C1" && ts == "1689090713.181639" {
+		return "$evt1"
+	}
+	return ""
+}
+
 func newConv() *Converter {
 	return &Converter{Resolver: fakeResolver{}, ServerName: "example.com"}
 }
@@ -67,6 +74,30 @@ func TestMrkdwn(t *testing.T) {
 				t.Errorf("html:\n got %q\nwant %q", got.HTML, tt.html)
 			}
 		})
+	}
+}
+
+func TestMapURL(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"https://theoldgang.slack.com/archives/C1/p1689090713181639", "https://matrix.to/#/%21meta:example.com/$evt1?via=example.com"},
+		{"https://theoldgang.slack.com/archives/C1/p1689090713181639?thread_ts=1689090000.000100&cid=C1", "https://matrix.to/#/%21meta:example.com/$evt1?via=example.com"},
+		// Not imported (yet): the room is the best available target.
+		{"https://theoldgang.slack.com/archives/C1/p1500000000000001", "https://matrix.to/#/%21meta:example.com?via=example.com"},
+		{"https://theoldgang.slack.com/archives/C1", "https://matrix.to/#/%21meta:example.com?via=example.com"},
+		{"https://theoldgang.slack.com/team/U1", "https://matrix.to/#/@adam:example.com"},
+		// Channels that weren't imported and other sites are left alone.
+		{"https://theoldgang.slack.com/archives/C9/p1689090713181639", "https://theoldgang.slack.com/archives/C9/p1689090713181639"},
+		{"https://example.com/archives/C1/p1689090713181639", "https://example.com/archives/C1/p1689090713181639"},
+	}
+	for _, tt := range tests {
+		if got := newConv().MapURL(tt.in); got != tt.want {
+			t.Errorf("MapURL(%q)\n got %q\nwant %q", tt.in, got, tt.want)
+		}
+	}
+	got := newConv().Mrkdwn("see <https://theoldgang.slack.com/archives/C1/p1689090713181639|this> and <https://theoldgang.slack.com/archives/C1/p1689090713181639>")
+	wantHTML := `see <a href="https://matrix.to/#/%21meta:example.com/$evt1?via=example.com">this</a> and <a href="https://matrix.to/#/%21meta:example.com/$evt1?via=example.com">https://matrix.to/#/%21meta:example.com/$evt1?via=example.com</a>`
+	if got.HTML != wantHTML {
+		t.Errorf("html:\n got %q\nwant %q", got.HTML, wantHTML)
 	}
 }
 

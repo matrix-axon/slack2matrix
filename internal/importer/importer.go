@@ -132,6 +132,15 @@ func (imp *Importer) Channel(slackID string) (string, id.RoomID) {
 	return c.Name, imp.rooms[slackID]
 }
 
+// Message implements convert.Resolver.
+func (imp *Importer) Message(channelID, ts string) id.EventID {
+	evt, err := imp.Store.FirstEvent(context.Background(), channelID, ts)
+	if err != nil {
+		imp.Log.Warn().Err(err).Str("channel", channelID).Str("ts", ts).Msg("Looking up linked message failed")
+	}
+	return evt
+}
+
 func (imp *Importer) room(channelID string) id.RoomID {
 	imp.roomsMu.RLock()
 	defer imp.roomsMu.RUnlock()

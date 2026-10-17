@@ -94,10 +94,10 @@ func (t *Transformer) card(a *slackexport.Attachment) convert.Text {
 		}
 	}
 	if author != "" {
-		add(linked(author, a.AuthorLink, true))
+		add(linked(author, t.Conv.MapURL(a.AuthorLink), true))
 	}
 	if a.Title != "" {
-		add(linked(a.Title, a.TitleLink, true))
+		add(linked(a.Title, t.Conv.MapURL(a.TitleLink), true))
 	}
 	if a.Text != "" {
 		add(t.Conv.Mrkdwn(a.Text))
@@ -116,6 +116,10 @@ func (t *Transformer) card(a *slackexport.Attachment) convert.Text {
 	}
 	if footer := firstNonEmpty(a.Footer, a.ServiceName); footer != "" {
 		f := t.Conv.Mrkdwn(footer)
+		if a.IsMsgUnfurl && a.FromURL != "" {
+			// A quoted Slack message: the footer links to the original.
+			f = linked(f.Plain, t.Conv.MapURL(html.UnescapeString(a.FromURL)), false)
+		}
 		add(convert.Text{Plain: f.Plain, HTML: "<sub>" + f.HTML + "</sub>"})
 	}
 	if len(plain) == 0 {

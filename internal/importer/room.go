@@ -36,8 +36,8 @@ type Filter struct {
 	Limit int
 }
 
-func (f *Filter) include(m *slackexport.Message) bool {
-	t := m.TS.Time()
+func (f *Filter) include(ts slackexport.TS) bool {
+	t := ts.Time()
 	if !f.Since.IsZero() && t.Before(f.Since) {
 		return false
 	}
@@ -45,6 +45,20 @@ func (f *Filter) include(m *slackexport.Message) bool {
 		return false
 	}
 	return true
+}
+
+// count returns how many of a channel's messages the filter lets through.
+func (f *Filter) count(times []slackexport.TS) int {
+	n := 0
+	for _, ts := range times {
+		if f.include(ts) {
+			n++
+		}
+	}
+	if f.Limit > 0 {
+		n = min(n, f.Limit)
+	}
+	return n
 }
 
 // roomRun is the state of one channel's import.
@@ -58,43 +72,56 @@ type roomRun struct {
 	sent, skipped int
 }
 
-// ImportChannel sends every message of a channel in chronological order.
+// importChannel sends every message of a channel in chronological order.
 // Already-sent parts are skipped, so it can be re-run after interruption.
-func (imp *Importer) ImportChannel(ctx context.Context, ch *slackexport.Channel, f Filter) error {
+func (imp *Importer) importChannel(ctx context.Context, b *batch, ch *slackexport.Channel, prio int, f Filter) error {
 	room := imp.room(ch.ID)
 	if room == "" {
 		return fmt.Errorf("no room for #%s; run setup first", ch.Name)
 	}
+	// Reading the channel waits for a slot, so channels that haven't had a
+	// turn yet don't all hold their messages in memory.
+	if err := b.sem.acquire(ctx, prio); err != nil {
+		return err
+	}
 	msgs, err := imp.Exp.Messages(ch)
+	if err == nil {
+		err = imp.reconcile(ctx, ch.ID, room)
+		if err != nil {
+			err = fmt.Errorf("#%s: reconciling interrupted sends: %w", ch.Name, err)
+		}
+	}
+	b.sem.release()
 	if err != nil {
 		return err
 	}
 	run := &roomRun{imp: imp, ch: ch, room: room, threadLatest: map[slackexport.TS]id.EventID{}}
 	log := imp.Log.With().Str("channel", ch.Name).Logger()
-	if err := imp.reconcile(ctx, ch.ID, room); err != nil {
-		return fmt.Errorf("#%s: reconciling interrupted sends: %w", ch.Name, err)
-	}
 	start := time.Now()
 	count := 0
 	for _, m := range msgs {
-		if !f.include(m) {
+		if !f.include(m.TS) {
 			continue
 		}
 		if f.Limit > 0 && count >= f.Limit {
 			break
 		}
 		count++
-		if err := ctx.Err(); err != nil {
+		b.arrive(ch.ID, m.TS)
+		if err := run.waitForLinks(ctx, b, m); err != nil {
 			return err
 		}
-		if err := run.message(ctx, m); err != nil {
+		if err := b.sem.acquire(ctx, prio); err != nil {
+			return err
+		}
+		err := run.message(ctx, m)
+		b.sem.release()
+		if err != nil {
 			return fmt.Errorf("#%s message %s: %w", ch.Name, m.TS, err)
 		}
-		if count%1000 == 0 {
-			log.Info().Int("messages", count).Int("events_sent", run.sent).Dur("elapsed", time.Since(start)).Msg("Progress")
-		}
+		b.progress.messageDone()
 	}
-	log.Info().Int("messages", count).Int("events_sent", run.sent).Int("already_sent", run.skipped).Dur("elapsed", time.Since(start)).Msg("Channel done")
+	log.Info().Int("messages", count).Int("events_sent", run.sent).Int("already_sent", run.skipped).Str("elapsed", time.Since(start).Round(time.Second).String()).Msg("Channel done")
 	return nil
 }
 

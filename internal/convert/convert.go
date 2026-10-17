@@ -19,6 +19,9 @@ type Resolver interface {
 	User(slackID string) *directory.Identity
 	// Channel returns a channel's name and its Matrix room (empty if not imported).
 	Channel(slackID string) (name string, room id.RoomID)
+	// Message returns the Matrix event a Slack message was imported as, or
+	// "" if it hasn't been (yet).
+	Message(channelID, ts string) id.EventID
 }
 
 // Converter renders Slack text using a Resolver for mentions.
@@ -154,6 +157,12 @@ func (c *Converter) channelMention(w *writer, slackID, label string, pre bool) {
 }
 
 func (c *Converter) link(w *writer, href, label string, pre bool) {
+	if mapped := c.MapURL(href); mapped != href {
+		if label == href {
+			label = mapped
+		}
+		href = mapped
+	}
 	if label == "" || label == href || strings.TrimPrefix(href, "mailto:") == label {
 		if label == "" {
 			label = strings.TrimPrefix(href, "mailto:")
@@ -170,6 +179,54 @@ func (c *Converter) link(w *writer, href, label string, pre bool) {
 		return
 	}
 	w.raw(label+" ("+href+")", `<a href="`+html.EscapeString(href)+`">`+html.EscapeString(label)+`</a>`)
+}
+
+// MapURL rewrites links into the Slack workspace so they keep working after
+// the migration: message and channel links become matrix.to links to the
+// imported event or room, and profile links point to the Matrix user. Other
+// URLs, and Slack links whose target wasn't imported, are returned unchanged.
+func (c *Converter) MapURL(href string) string {
+	u, err := url.Parse(href)
+	if err != nil || !strings.HasSuffix(strings.ToLower(u.Host), ".slack.com") {
+		return href
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	switch {
+	case len(parts) >= 2 && parts[0] == "archives":
+		_, room := c.Resolver.Channel(parts[1])
+		if room == "" {
+			return href
+		}
+		target := url.PathEscape(string(room))
+		if len(parts) >= 3 {
+			if ts, ok := PermalinkTS(parts[2]); ok {
+				if evt := c.Resolver.Message(parts[1], ts); evt != "" {
+					target += "/" + url.PathEscape(string(evt))
+				}
+			}
+		}
+		return "https://matrix.to/#/" + target + "?via=" + url.QueryEscape(c.ServerName)
+	case len(parts) == 2 && parts[0] == "team":
+		if ident := c.Resolver.User(parts[1]); ident != nil {
+			return "https://matrix.to/#/" + url.PathEscape(string(ident.MXID))
+		}
+	}
+	return href
+}
+
+// PermalinkTS converts the "p1689090713181639" segment of a Slack message
+// link to the message's ts, "1689090713.181639".
+func PermalinkTS(seg string) (string, bool) {
+	digits, ok := strings.CutPrefix(seg, "p")
+	if !ok || len(digits) != 16 {
+		return "", false
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return "", false
+		}
+	}
+	return digits[:10] + "." + digits[10:], true
 }
 
 // safeScheme limits links to schemes Matrix clients allow in formatted bodies.

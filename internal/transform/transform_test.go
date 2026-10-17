@@ -66,6 +66,7 @@ type resolver struct{ d *directory.Directory }
 
 func (r resolver) User(s string) *directory.Identity  { return r.d.User(s) }
 func (r resolver) Channel(string) (string, id.RoomID) { return "", "" }
+func (r resolver) Message(string, string) id.EventID  { return "" }
 
 func msg(t *testing.T, js string) *slackexport.Message {
 	t.Helper()

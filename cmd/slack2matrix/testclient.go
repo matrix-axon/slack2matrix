@@ -106,7 +106,7 @@ func runTestClient(ctx context.Context, cfg *config.Config, _ string, args []str
 	password := fs.String("password", "", "password")
 	dbPath := fs.String("db", "", "client crypto database (default: <state_dir>/testclient-<localpart>.db)")
 	verbose := fs.Bool("v", false, "list each decryption failure")
-	dump := fs.String("dump", "", "print decrypted events of the room with this name")
+	dump := fs.String("dump", "", "print decrypted events of the room with this name (\"*\" for every room) as JSON lines")
 	setupRecovery := fs.String("setup-recovery", "", "login: set up cross-signing and key backup like Element, writing the recovery key to this file")
 	restore := fs.String("restore-backup", "", "check: restore keys from the server-side backup using the recovery key in this file")
 	importKeys := fs.String("import-keys", "", "check: import this key export file before checking")
@@ -205,8 +205,8 @@ func runTestClient(ctx context.Context, cfg *config.Config, _ string, args []str
 			}
 			for _, evt := range resp.Chunk {
 				dec := checkEvent(ctx, helper, evt, rc, *verbose)
-				if dec != nil && *dump != "" && rc.name == *dump {
-					out, _ := json.Marshal(map[string]any{"ts": dec.Timestamp, "sender": dec.Sender, "type": dec.Type.Type, "content": dec.Content.Raw})
+				if dec != nil && (*dump == "*" || *dump != "" && rc.name == *dump) {
+					out, _ := json.Marshal(map[string]any{"room": room, "event_id": dec.ID, "ts": dec.Timestamp, "sender": dec.Sender, "type": dec.Type.Type, "content": dec.Content.Raw})
 					fmt.Println(string(out))
 				}
 			}

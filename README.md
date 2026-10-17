@@ -47,6 +47,7 @@ never stores a plaintext copy of the history.
 | channel | encrypted room in the space; topic and purpose become the room topic |
 | rich text (bold, italic, strike, code, quotes, lists, code blocks) | `formatted_body` HTML, plus a plain-text `body` |
 | `@user`, `#channel` | pills with `m.mentions`; links to the imported room |
+| links to Slack messages, channels and profiles | `matrix.to` links to the imported event, room or user (a link to a channel that wasn't imported is left as is) |
 | emoji | Unicode, honouring skin tones; custom emoji stay as `:name:` |
 | threads, including "also send to channel" | `m.thread` relations with reply fallback |
 | reactions | `m.reaction` annotations from each reacting user (Slack has no reaction timestamps, so they use the message's) |
@@ -120,6 +121,19 @@ make test
    Re-run the same command after any interruption. During the import, real
    users' rooms are muted, so their phones won't light up with ten years of
    history.
+
+   All channels run at once; `-concurrency` (default `import.room_concurrency`)
+   caps how many messages are being sent at a time, and the largest channels
+   get first turn. A message that links to an earlier message in another
+   channel waits until that channel has imported it, so the link can point
+   at the Matrix event. Progress is logged every 1,000 messages (and at
+   least once a minute):
+   ```
+   INF Processed 12,000 of 690,907 messages (1.7%) elapsed=4m10s eta=3h55m rate=48/s
+   ```
+   Links into channels left out of a run (`-channels …`) point at the room,
+   or stay Slack links if that room doesn't exist yet, so import the whole
+   export in one run for the best links.
 
 6. **Finalize.**
    ```sh

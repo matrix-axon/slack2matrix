@@ -10,9 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -64,10 +62,13 @@ func (lw levelWriter) WriteLevel(l zerolog.Level, p []byte) (int, error) {
 
 // openImporter connects everything needed to talk to Matrix.
 func openImporter(ctx context.Context, cfg *config.Config, log zerolog.Logger) (*importer.Importer, *store.Store, error) {
+	log.Info().Str("dir", cfg.ExportDir).Msg("Reading the Slack export")
+	start := time.Now()
 	exp, dir, _, _, err := loadTransformer(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
+	log.Info().Int("channels", len(exp.Channels)).Str("elapsed", time.Since(start).Round(time.Second).String()).Msg("Read the Slack export")
 	st, err := store.Open(cfg.StateDir)
 	if err != nil {
 		return nil, nil, err
@@ -147,7 +148,7 @@ func runImport(ctx context.Context, cfg *config.Config, _ string, args []string)
 	since := fs.String("since", "", "only messages on or after this date (YYYY-MM-DD)")
 	until := fs.String("until", "", "only messages before this date (YYYY-MM-DD)")
 	limit := fs.Int("limit", 0, "maximum messages per channel (0 = all)")
-	concurrency := fs.Int("concurrency", cfg.Import.RoomConcurrency, "channels imported in parallel")
+	concurrency := fs.Int("concurrency", cfg.Import.RoomConcurrency, "messages sent at once (one per channel)")
 	verbose := fs.Bool("v", false, "verbose logging")
 	_ = fs.Parse(args)
 
@@ -179,46 +180,7 @@ func runImport(ctx context.Context, cfg *config.Config, _ string, args []string)
 		return err
 	}
 
-	// Each room is sent sequentially, so the largest channels bound the total
-	// time: start them first.
-	sizes := map[string]int64{}
-	for _, ch := range chans {
-		sizes[ch.ID] = imp.Exp.ChannelSize(ch)
-	}
-	sort.SliceStable(chans, func(i, j int) bool { return sizes[chans[i].ID] > sizes[chans[j].ID] })
-
-	ctx, cancel := context.WithCancelCause(ctx)
-	defer cancel(nil)
-	work := make(chan *slackexport.Channel)
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var failures []string
-	for range max(*concurrency, 1) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for ch := range work {
-				if err := imp.ImportChannel(ctx, ch, f); err != nil {
-					log.Error().Err(err).Str("channel", ch.Name).Msg("Channel import failed")
-					mu.Lock()
-					failures = append(failures, ch.Name)
-					mu.Unlock()
-				}
-			}
-		}()
-	}
-	for _, ch := range chans {
-		select {
-		case work <- ch:
-		case <-ctx.Done():
-		}
-	}
-	close(work)
-	wg.Wait()
-	if len(failures) > 0 {
-		return fmt.Errorf("%d channel(s) failed: %s (re-run to resume)", len(failures), strings.Join(failures, ", "))
-	}
-	return ctx.Err()
+	return imp.ImportChannels(ctx, chans, f, *concurrency)
 }
 
 func runKeys(ctx context.Context, cfg *config.Config, _ string, args []string) error {
