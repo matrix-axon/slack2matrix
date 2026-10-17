@@ -66,6 +66,7 @@ func loadTransformer(cfg *config.Config) (*slackexport.Export, *directory.Direct
 		Exp:  exp,
 		Opts: transform.Options{
 			UnfurlCards:        cfg.Import.Unfurls == "card",
+			LinkPreviews:       cfg.Import.LinkPreviews,
 			FetchCardImages:    cfg.Import.FetchCardImages,
 			MarkEdited:         cfg.Import.MarkEdited,
 			SnippetInlineLimit: 16 * 1024,

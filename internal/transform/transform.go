@@ -4,6 +4,7 @@
 package transform
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"mime"
@@ -73,6 +74,9 @@ type Media struct {
 type Options struct {
 	// UnfurlCards renders link previews as quoted cards instead of skipping them.
 	UnfurlCards bool
+	// LinkPreviews embeds Slack's link previews in the message as MSC4095
+	// bundled URL previews (com.beeper.linkpreviews), without images.
+	LinkPreviews bool
 	// FetchCardImages re-hosts images referenced by bot/app cards.
 	FetchCardImages bool
 	// MarkEdited appends "(edited)" to edited messages.
@@ -120,6 +124,10 @@ func (t *Transformer) Message(m *slackexport.Message) []*Draft {
 
 	text := t.Conv.Message(m.Text, m.Blocks)
 	cards, cardMedia := t.attachments(m)
+	var previews []*event.BeeperLinkPreview
+	if t.Opts.LinkPreviews {
+		previews = t.linkPreviews(m)
+	}
 	for _, c := range cards {
 		text.Append(c)
 	}
@@ -149,10 +157,13 @@ func (t *Transformer) Message(m *slackexport.Message) []*Draft {
 		media[0].Content.Format = caption.Format
 		media[0].Content.FormattedBody = caption.FormattedBody
 		media[0].Content.Mentions = caption.Mentions
+		media[0].Content.BeeperLinkPreviews = previews
 		b.add(media[0])
 	} else {
 		if !text.IsEmpty() {
-			b.add(&Draft{Kind: KindMessage, Content: text.Content(msgType)})
+			c := text.Content(msgType)
+			c.BeeperLinkPreviews = previews
+			b.add(&Draft{Kind: KindMessage, Content: c})
 		}
 		for _, d := range media {
 			b.add(d)
@@ -366,6 +377,10 @@ func (d *Draft) String() string {
 		fmt.Fprintf(&sb, "\n    msgtype: %s\n    body: %q", d.Content.MsgType, d.Content.Body)
 		if d.Content.FormattedBody != "" {
 			fmt.Fprintf(&sb, "\n    html: %q", d.Content.FormattedBody)
+		}
+		if len(d.Content.BeeperLinkPreviews) > 0 {
+			previews, _ := json.Marshal(d.Content.BeeperLinkPreviews)
+			fmt.Fprintf(&sb, "\n    com.beeper.linkpreviews: %s", previews)
 		}
 		if d.Content.Mentions != nil && len(d.Content.Mentions.UserIDs) > 0 {
 			fmt.Fprintf(&sb, "\n    mentions: %v", d.Content.Mentions.UserIDs)

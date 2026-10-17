@@ -47,7 +47,8 @@ space:
   room_name_prefix: ""
 
 import:
-  unfurls: skip            # skip | card
+  unfurls: skip            # skip | card (quoted text card)
+  link_previews: false     # embed Slack's link previews (MSC4095, no images)
   fetch_card_images: true
   mark_edited: false
   room_concurrency: 4

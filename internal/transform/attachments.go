@@ -43,6 +43,36 @@ func (t *Transformer) attachments(m *slackexport.Message) ([]convert.Text, []*Dr
 	return cards, media
 }
 
+// linkPreviews converts Slack's link unfurls into MSC4095 bundled previews.
+// Images are left out: Slack only recorded the original image URLs, and
+// fetching them is out of scope.
+func (t *Transformer) linkPreviews(m *slackexport.Message) []*event.BeeperLinkPreview {
+	var out []*event.BeeperLinkPreview
+	for i := range m.Attachments {
+		a := &m.Attachments[i]
+		if !a.IsUnfurl() || a.IsMsgUnfurl {
+			continue
+		}
+		matched := firstNonEmpty(a.FromURL, a.OriginalURL)
+		p := &event.BeeperLinkPreview{
+			MatchedURL: matched,
+			LinkPreview: event.LinkPreview{
+				CanonicalURL: firstNonEmpty(a.TitleLink, matched),
+				Title:        a.Title,
+				SiteName:     a.ServiceName,
+			},
+		}
+		if a.Text != "" {
+			p.Description = t.Conv.Mrkdwn(a.Text).Plain
+		}
+		if p.Title == "" && p.Description == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // card renders one attachment as a blockquote.
 func (t *Transformer) card(a *slackexport.Attachment) convert.Text {
 	var plain []string

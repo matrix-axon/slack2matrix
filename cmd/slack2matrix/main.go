@@ -22,16 +22,18 @@ type command struct {
 }
 
 var commands = map[string]command{
-	"init":         {"write a config skeleton with fresh tokens", false, runInit},
-	"plan":         {"print statistics about the export without touching Matrix", true, runPlan},
-	"registration": {"write the Synapse appservice registration file", true, runRegistration},
-	"render":       {"show the Matrix events a Slack message becomes", true, runRender},
-	"setup":        {"create ghosts, the space and rooms", true, runSetup},
-	"import":       {"import messages (runs setup first; resumable)", true, runImport},
-	"keys":         {"upload keys to users' backups and write the key export file", true, runKeys},
-	"finalize":     {"deliver keys, unmute rooms and mark them read (run after the import)", true, runFinalize},
-	"crosssign":    {"verify a real user's import device with their recovery key", true, runCrossSign},
-	"testclient":   {"log in as a test user's device and verify decryption", true, runTestClient},
+	"init":          {"write a config skeleton with fresh tokens", false, runInit},
+	"plan":          {"print statistics about the export without touching Matrix", true, runPlan},
+	"registration":  {"write the Synapse appservice registration file", true, runRegistration},
+	"render":        {"show the Matrix events a Slack message becomes", true, runRender},
+	"setup":         {"create ghosts, the space and rooms", true, runSetup},
+	"import":        {"import messages (runs setup first; resumable)", true, runImport},
+	"keys":          {"upload keys to users' backups and write the key export file", true, runKeys},
+	"finalize":      {"deliver keys, unmute rooms and mark them read (run after the import)", true, runFinalize},
+	"crosssign":     {"verify a real user's import device with their recovery key", true, runCrossSign},
+	"reset-channel": {"delete a channel's room (purging it on the server) so it can be imported again", true, runResetChannel},
+	"send-test":     {"post one rendered Slack message to its room now, marked as a test", true, runSendTest},
+	"testclient":    {"log in as a test user's device and verify decryption", true, runTestClient},
 }
 
 func usage() {

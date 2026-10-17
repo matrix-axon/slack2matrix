@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/event"
 
 	"slack2matrix/internal/e2ee"
 )
@@ -86,6 +87,12 @@ func (imp *Importer) Finalize(ctx context.Context) error {
 				return fmt.Errorf("unmuting %s for %s: %w", room, user, err)
 			}
 			if last == "" {
+				continue
+			}
+			// Users who left the channel can't see its later events.
+			if m, err := imp.Store.Membership(ctx, room, user); err != nil {
+				return err
+			} else if m != string(event.MembershipJoin) {
 				continue
 			}
 			err := imp.MX.Client(user).SetReadMarkers(ctx, room, &mautrix.ReqSetReadMarkers{Read: last, FullyRead: last})

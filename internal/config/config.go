@@ -62,6 +62,8 @@ type Space struct {
 type Import struct {
 	// Unfurls is "skip" (default) or "card" for Slack link previews.
 	Unfurls string `yaml:"unfurls"`
+	// LinkPreviews embeds Slack's link previews as MSC4095 bundled previews.
+	LinkPreviews bool `yaml:"link_previews"`
 	// FetchCardImages downloads images referenced by bot/app cards and re-hosts them.
 	FetchCardImages bool `yaml:"fetch_card_images"`
 	// MarkEdited appends "(edited)" to messages that were edited in Slack.

@@ -207,6 +207,30 @@ func (s *Store) SetRoomSetupDone(ctx context.Context, channelID string) error {
 	return err
 }
 
+// ForgetChannel removes a channel's room and everything sent to it, so the
+// next import starts the channel over. Uploaded media is kept for reuse.
+func (s *Store) ForgetChannel(ctx context.Context, channelID string, room id.RoomID) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []struct {
+		sql string
+		arg any
+	}{
+		{"DELETE FROM events WHERE channel_id=?", channelID},
+		{"DELETE FROM rooms WHERE channel_id=?", channelID},
+		{"DELETE FROM members WHERE room_id=?", room},
+		{"DELETE FROM file_events WHERE room_id=?", room},
+	} {
+		if _, err := tx.ExecContext(ctx, q.sql, q.arg); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // Rooms returns every channel→room mapping.
 func (s *Store) Rooms(ctx context.Context) (map[string]id.RoomID, error) {
 	rows, err := s.DB.QueryContext(ctx, "SELECT channel_id, room_id FROM rooms")

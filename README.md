@@ -54,7 +54,7 @@ never stores a plaintext copy of the history.
 | snippets up to 16 KB | inline code block with a language hint |
 | deleted or missing files | `[file deleted]` / `[file unavailable: name]` |
 | bot and app cards (giphy, xkcd, Twitter, Reacji) | quoted HTML card; images re-hosted, falling back to a link if gone |
-| link unfurls | skipped by default (`import.unfurls: card` renders them as cards) |
+| link unfurls | skipped by default; `import.link_previews: true` embeds title/description as MSC4095 previews (no images), `import.unfurls: card` renders them as quoted cards |
 | `/me` | `m.emote` |
 | bot messages, Slackbot, system messages | `m.notice` from a ghost |
 | legacy file comments | reply to the file's event |
@@ -132,6 +132,19 @@ make test
 7. **Clean up.** Remove the registration from `homeserver.yaml` (or narrow
    the non-exclusive user regexes) and restart Synapse. Store `state_dir` and
    the key export somewhere safe.
+
+To redo one channel (for example after changing import options), delete its
+room and import it again:
+```sh
+bin/slack2matrix reset-channel -channel general -admin-token-file admin-token.txt
+bin/slack2matrix import -channels general
+```
+`reset-channel` purges the room with Synapse's admin API, removes it from the
+space and forgets its events; uploaded media is reused. It acts as the first
+`admins` entry unless that user isn't a server admin, in which case pass a
+server admin's access token (`-admin-token-file -` prompts for it).
+`send-test -channel <name> -ts <ts>` posts a single message to its room now,
+marked as a test, to try options without recording anything.
 
 ### Recovery keys and trust
 

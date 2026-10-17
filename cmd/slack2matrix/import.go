@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -16,7 +17,9 @@ import (
 
 	"github.com/rs/zerolog"
 	"golang.org/x/term"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/id"
+	"maunium.net/go/mautrix/synapseadmin"
 
 	"slack2matrix/internal/config"
 	"slack2matrix/internal/e2ee"
@@ -304,4 +307,101 @@ func promptSecret(prompt string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(line), nil
+}
+
+func runSendTest(ctx context.Context, cfg *config.Config, _ string, args []string) error {
+	fs := flag.NewFlagSet("send-test", flag.ExitOnError)
+	channel := fs.String("channel", "", "channel name")
+	ts := fs.String("ts", "", "ts of the Slack message to send")
+	as := fs.String("as", "", "real Matrix user to send as (default: first admin)")
+	unfurls := fs.String("unfurls", cfg.Import.Unfurls, "override import.unfurls (skip|card)")
+	previews := fs.Bool("link-previews", cfg.Import.LinkPreviews, "override import.link_previews")
+	_ = fs.Parse(args)
+	if *channel == "" || *ts == "" {
+		return errors.New("-channel and -ts are required")
+	}
+	cfg.Import.Unfurls, cfg.Import.LinkPreviews = *unfurls, *previews
+	sender := id.UserID(*as)
+	if sender == "" && len(cfg.Admins) > 0 {
+		sender = cfg.Admins[0]
+	}
+	log, closer, err := newLogger(cfg, false)
+	if err != nil {
+		return err
+	}
+	defer closer.Close()
+	imp, st, err := openImporter(ctx, cfg, log)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if !slices.Contains(imp.Recipients(), sender) {
+		return fmt.Errorf("%s is not one of the real users the importer acts for", sender)
+	}
+	ch := imp.Exp.ChannelByName(*channel)
+	if ch == nil {
+		return fmt.Errorf("no channel named %q", *channel)
+	}
+	evt, err := imp.SendTest(ctx, ch, slackexport.TS(*ts), sender)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("sent %s as %s\n", evt, sender)
+	return nil
+}
+
+func runResetChannel(ctx context.Context, cfg *config.Config, _ string, args []string) error {
+	fs := flag.NewFlagSet("reset-channel", flag.ExitOnError)
+	channel := fs.String("channel", "", "channel name")
+	as := fs.String("as", "", "real Matrix user who is a Synapse server admin to act as (default: first admin)")
+	tokenFile := fs.String("admin-token-file", "", "file holding a server admin's access token, used instead of -as (\"-\" prompts)")
+	_ = fs.Parse(args)
+	if *channel == "" {
+		return errors.New("-channel is required")
+	}
+	log, closer, err := newLogger(cfg, false)
+	if err != nil {
+		return err
+	}
+	defer closer.Close()
+	imp, st, err := openImporter(ctx, cfg, log)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	ch := imp.Exp.ChannelByName(*channel)
+	if ch == nil {
+		return fmt.Errorf("no channel named %q", *channel)
+	}
+	var cli *mautrix.Client
+	switch *tokenFile {
+	case "":
+		admin := id.UserID(*as)
+		if admin == "" && len(cfg.Admins) > 0 {
+			admin = cfg.Admins[0]
+		}
+		if !slices.Contains(imp.Recipients(), admin) {
+			return fmt.Errorf("%q is not one of the real users the importer acts for; pass -as or -admin-token-file", admin)
+		}
+		cli = imp.MX.Client(admin)
+	default:
+		var token string
+		if *tokenFile == "-" {
+			token, err = promptSecret("Server admin access token: ")
+		} else {
+			token, err = e2ee.ReadSecretFile(*tokenFile)
+		}
+		if err != nil {
+			return err
+		}
+		if cli, err = mautrix.NewClient(cfg.Homeserver.URL, "", token); err != nil {
+			return err
+		}
+		resp, err := cli.Whoami(ctx)
+		if err != nil {
+			return fmt.Errorf("admin token rejected: %w", err)
+		}
+		cli.UserID = resp.UserID
+	}
+	return imp.ResetChannel(ctx, ch, &synapseadmin.Client{Client: cli})
 }
