@@ -1,0 +1,5 @@
+state/
+dev/
+bin/
+*.db
+prod/
