@@ -27,7 +27,12 @@ disposable Synapse (see "Validation"). It runs on Linux only.
 make build   # -> bin/slack2matrix
 make test    # go test ./...
 make vet
+make notices # regenerate THIRD_PARTY_NOTICES.md
 ```
+
+After changing dependencies or embedded third-party data, run `make notices`
+and commit `THIRD_PARTY_NOTICES.md`. Add anything that isn't a Go module
+(data files, C code bundled by a module) to `scripts/notices-extra.md`.
 
 - The Makefile sets everything needed. If you run `go` by hand, reproduce it:
   `GOEXPERIMENT=nojsonv2 GOFLAGS=-tags=goolm` and `GOROOT` unset.

@@ -283,3 +283,9 @@ event can't be decrypted, if any message was sent in plaintext, or if any
   timestamps. `import.mark_edited` adds an "(edited)" marker.
 - The `SLACKIMPORT` devices must stay on the accounts. Deleting them makes
   Element flag the history as sent from a deleted device.
+
+## License
+
+Apache License 2.0; see `LICENSE`. Third-party components compiled into the
+binary and their licenses are listed in `THIRD_PARTY_NOTICES.md`, which is
+regenerated with `make notices`.
