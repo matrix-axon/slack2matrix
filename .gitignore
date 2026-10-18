@@ -1,5 +1,5 @@
 state/
-dev/
+/dev
 bin/
 *.db
-prod/
+/prod
