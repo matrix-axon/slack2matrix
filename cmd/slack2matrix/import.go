@@ -149,6 +149,7 @@ func runImport(ctx context.Context, cfg *config.Config, _ string, args []string)
 	until := fs.String("until", "", "only messages before this date (YYYY-MM-DD)")
 	limit := fs.Int("limit", 0, "maximum messages per channel (0 = all)")
 	concurrency := fs.Int("concurrency", cfg.Import.RoomConcurrency, "messages sent at once (one per channel)")
+	mediaConcurrency := fs.Int("media-concurrency", cfg.Import.MediaConcurrency, "media uploads running ahead of the messages (0 = upload only when sending)")
 	verbose := fs.Bool("v", false, "verbose logging")
 	_ = fs.Parse(args)
 
@@ -180,7 +181,7 @@ func runImport(ctx context.Context, cfg *config.Config, _ string, args []string)
 		return err
 	}
 
-	return imp.ImportChannels(ctx, chans, f, *concurrency)
+	return imp.ImportChannels(ctx, chans, f, *concurrency, *mediaConcurrency)
 }
 
 func runKeys(ctx context.Context, cfg *config.Config, _ string, args []string) error {

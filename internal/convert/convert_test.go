@@ -29,6 +29,16 @@ func (fakeResolver) Channel(slackID string) (string, id.RoomID) {
 	return "", ""
 }
 
+func (r fakeResolver) FindUser(ref string) *directory.Identity {
+	if ref == "adam" {
+		ref = "U1"
+	}
+	if ref != "U1" && ref != "U2" {
+		return nil
+	}
+	return r.User(ref)
+}
+
 func (fakeResolver) Message(channelID, ts string) id.EventID {
 	if channelID == "C1" && ts == "1689090713.181639" {
 		return "$evt1"
@@ -81,10 +91,14 @@ func TestMapURL(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"https://theoldgang.slack.com/archives/C1/p1689090713181639", "https://matrix.to/#/%21meta:example.com/$evt1?via=example.com"},
 		{"https://theoldgang.slack.com/archives/C1/p1689090713181639?thread_ts=1689090000.000100&cid=C1", "https://matrix.to/#/%21meta:example.com/$evt1?via=example.com"},
+		// Slack keeps characters typed right after a link in the URL.
+		{"https://theoldgang.slack.com/archives/C1/p1689090713181639+", "https://matrix.to/#/%21meta:example.com/$evt1?via=example.com"},
 		// Not imported (yet): the room is the best available target.
 		{"https://theoldgang.slack.com/archives/C1/p1500000000000001", "https://matrix.to/#/%21meta:example.com?via=example.com"},
 		{"https://theoldgang.slack.com/archives/C1", "https://matrix.to/#/%21meta:example.com?via=example.com"},
 		{"https://theoldgang.slack.com/team/U1", "https://matrix.to/#/@adam:example.com"},
+		{"https://theoldgang.slack.com/team/adam", "https://matrix.to/#/@adam:example.com"},
+		{"https://theoldgang.slack.com/team/nobody", "https://theoldgang.slack.com/team/nobody"},
 		// Channels that weren't imported and other sites are left alone.
 		{"https://theoldgang.slack.com/archives/C9/p1689090713181639", "https://theoldgang.slack.com/archives/C9/p1689090713181639"},
 		{"https://example.com/archives/C1/p1689090713181639", "https://example.com/archives/C1/p1689090713181639"},

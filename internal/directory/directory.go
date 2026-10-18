@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"maunium.net/go/mautrix/id"
 
@@ -28,6 +29,9 @@ type Identity struct {
 // output depends only on the export and config, so ghost IDs are stable
 // across runs.
 type Directory struct {
+	// mu guards the maps: senders and mentions not in users.json get ghosts
+	// created on first sight, and channels are converted concurrently.
+	mu         sync.Mutex
 	cfg        *config.Config
 	exp        *slackexport.Export
 	byMXID     map[id.UserID]*Identity
@@ -216,6 +220,12 @@ func firstNonEmpty(vals ...string) string {
 
 // User resolves a Slack user ID (as used in mentions and reactions).
 func (d *Directory) User(slackID string) *Identity {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.user(slackID)
+}
+
+func (d *Directory) user(slackID string) *Identity {
 	if ident, ok := d.bySlackID[slackID]; ok {
 		return ident
 	}
@@ -233,10 +243,27 @@ func (d *Directory) User(slackID string) *Identity {
 	return ident
 }
 
+// Find returns the identity of a known Slack user, given their ID or
+// username, without creating one. Profile links use it, so they never point
+// at a ghost that doesn't exist.
+func (d *Directory) Find(ref string) *Identity {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if ident, ok := d.bySlackID[ref]; ok {
+		return ident
+	}
+	if u := userByName(d.exp, ref); u != nil {
+		return d.bySlackID[u.ID]
+	}
+	return nil
+}
+
 // Sender resolves who a message should be sent as.
 func (d *Directory) Sender(m *slackexport.Message) *Identity {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if m.User != "" {
-		return d.User(m.User)
+		return d.user(m.User)
 	}
 	if m.Username != "" {
 		avatar := ""
@@ -255,11 +282,13 @@ func (d *Directory) Sender(m *slackexport.Message) *Identity {
 		}
 		return d.ghost(name, name, d.botAvatars[m.BotID], true)
 	}
-	return d.User(slackbotID)
+	return d.user(slackbotID)
 }
 
 // All returns every identity known so far, sorted by Matrix ID.
 func (d *Directory) All() []*Identity {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	out := make([]*Identity, 0, len(d.byMXID))
 	for _, ident := range d.byMXID {
 		out = append(out, ident)

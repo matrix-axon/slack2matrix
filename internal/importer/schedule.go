@@ -24,10 +24,13 @@ import (
 // that links to an earlier message in another channel waits until that
 // channel has imported it, so the link can point at the Matrix event.
 //
+// Media is uploaded ahead of the messages that need it by mediaConcurrency
+// background workers (0 uploads only as each message is sent).
+//
 // Waiting can't deadlock: a channel only waits for another channel to move
 // past an earlier timestamp, and waiting channels don't hold a slot, so the
 // channel whose next message is earliest overall can always proceed.
-func (imp *Importer) ImportChannels(ctx context.Context, chans []*slackexport.Channel, f Filter, concurrency int) error {
+func (imp *Importer) ImportChannels(ctx context.Context, chans []*slackexport.Channel, f Filter, concurrency, mediaConcurrency int) error {
 	chans = slices.Clone(chans)
 	sizes := map[string]int64{}
 	for _, ch := range chans {
@@ -53,6 +56,13 @@ func (imp *Importer) ImportChannels(ctx context.Context, chans []*slackexport.Ch
 
 	stop := make(chan struct{})
 	go b.progress.heartbeat(stop)
+	if mediaConcurrency > 0 {
+		b.prefetch = true
+		workerCtx, stopWorkers := context.WithCancel(ctx)
+		workers := imp.uploads.startWorkers(workerCtx, mediaConcurrency)
+		defer workers.Wait()
+		defer stopWorkers()
+	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var failures []string
@@ -87,6 +97,8 @@ type batch struct {
 	done     atomic.Int64
 	waiting  atomic.Int64
 	progress *progress
+	// prefetch is set when media upload workers are running.
+	prefetch bool
 
 	mu sync.Mutex
 	// next is the message each unfinished channel is working on; everything
@@ -296,7 +308,9 @@ func (p *progress) report(final bool) {
 	done, total := p.b.done.Load(), p.b.total
 	now := time.Now()
 	p.mu.Lock()
-	if !final && done == p.reported && now.Sub(p.last) < time.Minute {
+	// Skip if nothing changed, or a line went out moments ago (the minute
+	// heartbeat and a 1,000-message mark can coincide).
+	if !final && (done == p.reported && now.Sub(p.last) < time.Minute || now.Sub(p.last) < 5*time.Second) {
 		p.mu.Unlock()
 		return
 	}

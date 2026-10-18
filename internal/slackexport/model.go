@@ -4,6 +4,7 @@ package slackexport
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -298,6 +299,15 @@ type Attachment struct {
 	MrkdwnIn    []string          `json:"mrkdwn_in"`
 	Blocks      []Block           `json:"message_blocks"`
 	Files       []File            `json:"files"`
+}
+
+var slackPermalink = regexp.MustCompile(`\.slack\.com/archives/[A-Z0-9]+/p\d{16}`)
+
+// QuotesMessage reports whether the attachment quotes a Slack message: a
+// message unfurl, or one of the cards older exports attach to a
+// "reply_broadcast", which carry the message link but no unfurl flag.
+func (a *Attachment) QuotesMessage() bool {
+	return a.IsMsgUnfurl || slackPermalink.MatchString(a.FromURL)
 }
 
 // IsUnfurl reports whether Slack generated the attachment as a link preview.

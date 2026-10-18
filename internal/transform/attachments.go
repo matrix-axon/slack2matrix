@@ -21,7 +21,7 @@ func (t *Transformer) attachments(m *slackexport.Message) ([]convert.Text, []*Dr
 	var media []*Draft
 	for i := range m.Attachments {
 		a := &m.Attachments[i]
-		unfurl := a.IsUnfurl() && !a.IsMsgUnfurl
+		unfurl := a.IsUnfurl() && !a.QuotesMessage()
 		if unfurl && !t.Opts.UnfurlCards {
 			continue
 		}
@@ -50,7 +50,7 @@ func (t *Transformer) linkPreviews(m *slackexport.Message) []*event.BeeperLinkPr
 	var out []*event.BeeperLinkPreview
 	for i := range m.Attachments {
 		a := &m.Attachments[i]
-		if !a.IsUnfurl() || a.IsMsgUnfurl {
+		if !a.IsUnfurl() || a.QuotesMessage() {
 			continue
 		}
 		matched := firstNonEmpty(a.FromURL, a.OriginalURL)
@@ -88,7 +88,7 @@ func (t *Transformer) card(a *slackexport.Attachment) convert.Text {
 		add(t.Conv.Mrkdwn(a.Pretext))
 	}
 	author := firstNonEmpty(a.AuthorName, a.AuthorSub)
-	if a.IsMsgUnfurl && a.AuthorID != "" {
+	if a.QuotesMessage() && a.AuthorID != "" {
 		if ident := t.Dir.User(a.AuthorID); ident != nil && ident.DisplayName != "" {
 			author = ident.DisplayName
 		}
@@ -114,11 +114,22 @@ func (t *Transformer) card(a *slackexport.Attachment) convert.Text {
 			HTML:  "<strong>" + html.EscapeString(f.Title) + "</strong>: " + v.HTML,
 		})
 	}
-	if footer := firstNonEmpty(a.Footer, a.ServiceName); footer != "" {
+	footer := firstNonEmpty(a.Footer, a.ServiceName)
+	// A quoted Slack message links to the imported original. Links that
+	// can't be mapped would only lead back to Slack, so they're dropped.
+	var permalink string
+	if from := html.UnescapeString(a.FromURL); from != "" {
+		if mapped := t.Conv.MapURL(from); mapped != from {
+			permalink = mapped
+			if footer == "" {
+				footer = "View message"
+			}
+		}
+	}
+	if footer != "" {
 		f := t.Conv.Mrkdwn(footer)
-		if a.IsMsgUnfurl && a.FromURL != "" {
-			// A quoted Slack message: the footer links to the original.
-			f = linked(f.Plain, t.Conv.MapURL(html.UnescapeString(a.FromURL)), false)
+		if permalink != "" {
+			f = linked(f.Plain, permalink, false)
 		}
 		add(convert.Text{Plain: f.Plain, HTML: "<sub>" + f.HTML + "</sub>"})
 	}

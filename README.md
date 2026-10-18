@@ -126,8 +126,12 @@ make test
    caps how many messages are being sent at a time, and the largest channels
    get first turn. A message that links to an earlier message in another
    channel waits until that channel has imported it, so the link can point
-   at the Matrix event. Progress is logged every 1,000 messages (and at
-   least once a minute):
+   at the Matrix event. Media is uploaded ahead of the messages that need
+   it by `-media-concurrency` background workers (default
+   `import.media_concurrency`; `0` uploads each file only when its message
+   is sent). On a busy production server, start low, e.g.
+   `-concurrency 2 -media-concurrency 2`. Progress is logged every 1,000
+   messages (and at least once a minute):
    ```
    INF Processed 12,000 of 690,907 messages (1.7%) elapsed=4m10s eta=3h55m rate=48/s
    ```

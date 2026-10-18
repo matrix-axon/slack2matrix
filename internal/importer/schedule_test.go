@@ -2,10 +2,17 @@ package importer
 
 import (
 	"context"
+	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/rs/zerolog"
+	"maunium.net/go/mautrix/id"
+
 	"slack2matrix/internal/slackexport"
+	"slack2matrix/internal/transform"
 )
 
 func TestPrioritySemOrder(t *testing.T) {
@@ -110,5 +117,114 @@ func TestShortDuration(t *testing.T) {
 		if got := shortDuration(d); got != want {
 			t.Errorf("shortDuration(%v) = %q, want %q", d, got, want)
 		}
+	}
+}
+
+func TestUploadsDedup(t *testing.T) {
+	var mu sync.Mutex
+	calls := map[string]int{}
+	active := map[string]bool{}
+	release := make(chan struct{})
+	u := &uploads{jobs: map[string]*uploadJob{}, log: zerolog.Nop()}
+	// Like storeUpload, skip media that's already been uploaded.
+	u.upload = func(ctx context.Context, key string, _ id.UserID, _ *transform.Media) error {
+		mu.Lock()
+		if active[key] {
+			t.Errorf("%s uploaded twice at once", key)
+		}
+		if calls[key] > 0 {
+			mu.Unlock()
+			return nil
+		}
+		calls[key]++
+		active[key] = true
+		mu.Unlock()
+		<-release
+		mu.Lock()
+		active[key] = false
+		mu.Unlock()
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	workers := u.startWorkers(ctx, 1)
+	u.prefetch(ctx, "a", "", nil)
+	// Wait for the worker to start "a", then queue "b" behind it.
+	for {
+		u.mu.Lock()
+		started := u.jobs["a"] != nil && u.jobs["a"].claimed
+		u.mu.Unlock()
+		if started {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	u.prefetch(ctx, "b", "", nil)
+	u.prefetch(ctx, "a", "", nil) // already in progress: not queued again
+
+	// A message needing "a" waits for the worker; one needing "b" (queued,
+	// not started) uploads it itself.
+	gotA := make(chan error)
+	go func() { gotA <- u.ensure(ctx, "a", "", nil) }()
+	gotB := make(chan error)
+	go func() { gotB <- u.ensure(ctx, "b", "", nil) }()
+	close(release)
+	if err := <-gotA; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-gotB; err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	workers.Wait()
+	if calls["a"] != 1 || calls["b"] != 1 {
+		t.Fatalf("upload calls = %v, want one each", calls)
+	}
+}
+
+func TestUploadsRetryFailedPrefetch(t *testing.T) {
+	var calls atomic.Int32
+	u := &uploads{jobs: map[string]*uploadJob{}, log: zerolog.Nop()}
+	u.upload = func(ctx context.Context, key string, _ id.UserID, _ *transform.Media) error {
+		if calls.Add(1) == 1 {
+			return errors.New("transient")
+		}
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	workers := u.startWorkers(ctx, 1)
+	u.prefetch(ctx, "a", "", nil)
+	for calls.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	if err := u.ensure(ctx, "a", "", nil); err != nil {
+		t.Fatalf("ensure after failed prefetch: %v", err)
+	}
+	cancel()
+	workers.Wait()
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("upload calls = %d, want 2", n)
+	}
+}
+
+func TestCursor(t *testing.T) {
+	c := newCursor()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan bool)
+	go func() { done <- c.waitUntil(ctx, 5) }()
+	c.set(4)
+	select {
+	case <-done:
+		t.Fatal("returned before the cursor reached 5")
+	case <-time.After(20 * time.Millisecond):
+	}
+	c.set(5)
+	if !<-done {
+		t.Fatal("waitUntil failed")
+	}
+	go func() { done <- c.waitUntil(ctx, 10) }()
+	cancel()
+	if <-done {
+		t.Fatal("waitUntil succeeded after cancel")
 	}
 }

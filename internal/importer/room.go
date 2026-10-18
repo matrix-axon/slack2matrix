@@ -95,18 +95,27 @@ func (imp *Importer) importChannel(ctx context.Context, b *batch, ch *slackexpor
 	if err != nil {
 		return err
 	}
+	var todo []*slackexport.Message
+	for _, m := range msgs {
+		if f.Limit > 0 && len(todo) >= f.Limit {
+			break
+		}
+		if f.include(m.TS) {
+			todo = append(todo, m)
+		}
+	}
+	cur := newCursor()
+	if b.prefetch {
+		prefetchCtx, stopPrefetch := context.WithCancel(ctx)
+		defer stopPrefetch()
+		go imp.prefetchChannel(prefetchCtx, todo, cur)
+	}
+
 	run := &roomRun{imp: imp, ch: ch, room: room, threadLatest: map[slackexport.TS]id.EventID{}}
 	log := imp.Log.With().Str("channel", ch.Name).Logger()
 	start := time.Now()
-	count := 0
-	for _, m := range msgs {
-		if !f.include(m.TS) {
-			continue
-		}
-		if f.Limit > 0 && count >= f.Limit {
-			break
-		}
-		count++
+	for i, m := range todo {
+		cur.set(i)
 		b.arrive(ch.ID, m.TS)
 		if err := run.waitForLinks(ctx, b, m); err != nil {
 			return err
@@ -121,7 +130,7 @@ func (imp *Importer) importChannel(ctx context.Context, b *batch, ch *slackexpor
 		}
 		b.progress.messageDone()
 	}
-	log.Info().Int("messages", count).Int("events_sent", run.sent).Int("already_sent", run.skipped).Str("elapsed", time.Since(start).Round(time.Second).String()).Msg("Channel done")
+	log.Info().Int("messages", len(todo)).Int("events_sent", run.sent).Int("already_sent", run.skipped).Str("elapsed", time.Since(start).Round(time.Second).String()).Msg("Channel done")
 	return nil
 }
 

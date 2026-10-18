@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"maunium.net/go/mautrix/event"
@@ -64,9 +65,10 @@ func newTestTransformer(t *testing.T) (*Transformer, string) {
 
 type resolver struct{ d *directory.Directory }
 
-func (r resolver) User(s string) *directory.Identity  { return r.d.User(s) }
-func (r resolver) Channel(string) (string, id.RoomID) { return "", "" }
-func (r resolver) Message(string, string) id.EventID  { return "" }
+func (r resolver) User(s string) *directory.Identity   { return r.d.User(s) }
+func (r resolver) Channel(string) (string, id.RoomID)  { return "", "" }
+func (r resolver) Message(string, string) id.EventID   { return "" }
+func (r resolver) FindUser(string) *directory.Identity { return nil }
 
 func msg(t *testing.T, js string) *slackexport.Message {
 	t.Helper()
@@ -205,5 +207,40 @@ func TestDuplicateReactionsCollapsed(t *testing.T) {
 		"reactions":[{"name":"+1","users":["U1"],"count":1},{"name":"thumbsup","users":["U1","U2"],"count":2}]}`))
 	if len(drafts) != 3 {
 		t.Fatalf("got %d drafts, want message + 2 reactions", len(drafts))
+	}
+}
+
+// linkResolver knows one imported room and message, for link mapping.
+type linkResolver struct{ resolver }
+
+func (linkResolver) Channel(string) (string, id.RoomID) { return "general", "!general:example.com" }
+func (linkResolver) Message(_, ts string) id.EventID {
+	if ts == "1500000000.000100" {
+		return "$reply"
+	}
+	return ""
+}
+func (r linkResolver) FindUser(ref string) *directory.Identity { return r.d.Find(ref) }
+
+func TestReplyBroadcastCardsQuoteMessages(t *testing.T) {
+	tr, _ := newTestTransformer(t)
+	tr.Conv = &convert.Converter{Resolver: linkResolver{resolver{tr.Dir}}, ServerName: "example.com"}
+	// Older exports attach the reply as a card with only from_url to mark
+	// it as a quoted message; it must not be dropped as a link preview.
+	drafts := tr.Message(msg(t, `{"type":"message","subtype":"reply_broadcast","user":"U2","ts":"1500000000.000200","text":"",
+		"attachments":[{"from_url":"https://x.slack.com/archives/C1/p1500000000000100?thread_ts=1400000000000100&cid=C1",
+			"author_name":"Steve S","author_link":"https://x.slack.com/team/adam","text":"the reply","ts":"1500000000.000100"}]}`))
+	if len(drafts) != 1 {
+		t.Fatalf("got %d drafts, want 1", len(drafts))
+	}
+	html := drafts[0].Content.FormattedBody
+	for _, want := range []string{
+		"the reply",
+		`<a href="https://matrix.to/#/@adam:example.com"><strong>Steve S</strong></a>`,
+		`<a href="https://matrix.to/#/%21general:example.com/$reply?via=example.com">View message</a>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("formatted body lacks %q:\n%s", want, html)
+		}
 	}
 }

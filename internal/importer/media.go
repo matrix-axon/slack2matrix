@@ -42,6 +42,9 @@ func mediaKey(m *transform.Media) string {
 // the content's file and info. ok is false if the media is unavailable.
 func (imp *Importer) attachMedia(ctx context.Context, sender id.UserID, m *transform.Media, c *event.MessageEventContent) (ok bool, err error) {
 	key := mediaKey(m)
+	if err := imp.uploads.ensure(ctx, key, sender, m); err != nil {
+		return false, err
+	}
 	if failure, err := imp.Store.MediaFailure(ctx, key); err != nil {
 		return false, err
 	} else if failure != "" {
@@ -52,22 +55,7 @@ func (imp *Importer) attachMedia(ctx context.Context, sender id.UserID, m *trans
 		return false, err
 	}
 	var sm storedMedia
-	if stored == "" {
-		sm, err = imp.uploadMedia(ctx, sender, m)
-		if errors.Is(err, errUnavailable) {
-			imp.Log.Warn().Err(err).Str("media", key).Msg("Media unavailable")
-			return false, imp.Store.SetMediaFailure(ctx, key, err.Error())
-		} else if err != nil {
-			return false, err
-		}
-		data, err := json.Marshal(sm)
-		if err != nil {
-			return false, err
-		}
-		if err := imp.Store.SetMedia(ctx, key, string(data)); err != nil {
-			return false, err
-		}
-	} else if err := json.Unmarshal([]byte(stored), &sm); err != nil {
+	if err := json.Unmarshal([]byte(stored), &sm); err != nil {
 		return false, fmt.Errorf("corrupt media record %s: %w", key, err)
 	}
 	c.File = sm.File

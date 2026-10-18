@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"math/rand/v2"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"maunium.net/go/mautrix/id"
@@ -13,18 +15,22 @@ import (
 	"slack2matrix/internal/convert"
 	"slack2matrix/internal/directory"
 	"slack2matrix/internal/slackexport"
+	"slack2matrix/internal/store"
 	"slack2matrix/internal/transform"
 )
 
 // exportResolver resolves mentions using the export alone, plus an optional
 // channel→room lookup once rooms exist.
 type exportResolver struct {
-	dir   *directory.Directory
-	exp   *slackexport.Export
-	rooms func(channelID string) id.RoomID
+	dir      *directory.Directory
+	exp      *slackexport.Export
+	rooms    func(channelID string) id.RoomID
+	messages func(channelID, ts string) id.EventID
 }
 
 func (r *exportResolver) User(slackID string) *directory.Identity { return r.dir.User(slackID) }
+
+func (r *exportResolver) FindUser(ref string) *directory.Identity { return r.dir.Find(ref) }
 
 func (r *exportResolver) Channel(slackID string) (string, id.RoomID) {
 	c := r.exp.Channel(slackID)
@@ -38,9 +44,14 @@ func (r *exportResolver) Channel(slackID string) (string, id.RoomID) {
 	return c.Name, room
 }
 
-// Message implements convert.Resolver. Nothing has been imported when
-// rendering offline, so message links fall back to room links.
-func (r *exportResolver) Message(string, string) id.EventID { return "" }
+// Message implements convert.Resolver, using the import state when there
+// is one.
+func (r *exportResolver) Message(channelID, ts string) id.EventID {
+	if r.messages == nil {
+		return ""
+	}
+	return r.messages(channelID, ts)
+}
 
 // loadTransformer opens the export and builds the directory and transformer.
 func loadTransformer(cfg *config.Config) (*slackexport.Export, *directory.Directory, *transform.Transformer, *exportResolver, error) {
@@ -82,16 +93,37 @@ func loadTransformer(cfg *config.Config) (*slackexport.Export, *directory.Direct
 func runRender(_ context.Context, cfg *config.Config, _ string, args []string) error {
 	fs := flag.NewFlagSet("render", flag.ExitOnError)
 	channel := fs.String("channel", "", "channel name")
-	ts := fs.String("ts", "", "message ts to render (default: all, or a random sample with -sample)")
+	ts := fs.String("ts", "", "comma-separated message ts to render (default: all, or a random sample with -sample)")
 	sample := fs.Int("sample", 0, "render this many random messages")
 	grep := fs.String("grep", "", "only messages whose raw text contains this string")
 	subtype := fs.String("subtype", "", "only messages with this subtype")
 	limit := fs.Int("limit", 20, "maximum messages to render")
 	_ = fs.Parse(args)
 
-	exp, _, tr, _, err := loadTransformer(cfg)
+	exp, _, tr, res, err := loadTransformer(cfg)
 	if err != nil {
 		return err
+	}
+	// After (part of) an import, show links as the importer resolves them.
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, "import.db")); err == nil {
+		st, err := store.Open(cfg.StateDir)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		rooms, err := st.Rooms(context.Background())
+		if err != nil {
+			return err
+		}
+		res.rooms = func(channelID string) id.RoomID { return rooms[channelID] }
+		res.messages = func(channelID, ts string) id.EventID {
+			evt, _ := st.FirstEvent(context.Background(), channelID, ts)
+			return evt
+		}
+	}
+	wantTS := map[string]bool{}
+	for _, t := range splitList(*ts) {
+		wantTS[t] = true
 	}
 	var channels []*slackexport.Channel
 	if *channel != "" {
@@ -111,7 +143,7 @@ func runRender(_ context.Context, cfg *config.Config, _ string, args []string) e
 			return err
 		}
 		for _, m := range msgs {
-			if *ts != "" && string(m.TS) != *ts {
+			if len(wantTS) > 0 && !wantTS[string(m.TS)] {
 				continue
 			}
 			if *grep != "" && !strings.Contains(m.Text, *grep) {

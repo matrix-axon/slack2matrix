@@ -17,6 +17,9 @@ import (
 type Resolver interface {
 	// User returns the identity for a Slack user ID, or nil if unknown.
 	User(slackID string) *directory.Identity
+	// FindUser returns the identity of a known Slack user by ID or username,
+	// or nil; unlike User it never invents a ghost.
+	FindUser(ref string) *directory.Identity
 	// Channel returns a channel's name and its Matrix room (empty if not imported).
 	Channel(slackID string) (name string, room id.RoomID)
 	// Message returns the Matrix event a Slack message was imported as, or
@@ -207,7 +210,7 @@ func (c *Converter) MapURL(href string) string {
 		}
 		return "https://matrix.to/#/" + target + "?via=" + url.QueryEscape(c.ServerName)
 	case len(parts) == 2 && parts[0] == "team":
-		if ident := c.Resolver.User(parts[1]); ident != nil {
+		if ident := c.Resolver.FindUser(parts[1]); ident != nil {
 			return "https://matrix.to/#/" + url.PathEscape(string(ident.MXID))
 		}
 	}
@@ -215,12 +218,15 @@ func (c *Converter) MapURL(href string) string {
 }
 
 // PermalinkTS converts the "p1689090713181639" segment of a Slack message
-// link to the message's ts, "1689090713.181639".
+// link to the message's ts, "1689090713.181639". Characters after the 16
+// digits are ignored.
 func PermalinkTS(seg string) (string, bool) {
 	digits, ok := strings.CutPrefix(seg, "p")
-	if !ok || len(digits) != 16 {
+	if !ok || len(digits) < 16 {
 		return "", false
 	}
+	// Anything after the 16 digits was typed after the link (e.g. "+").
+	digits = digits[:16]
 	for _, r := range digits {
 		if r < '0' || r > '9' {
 			return "", false

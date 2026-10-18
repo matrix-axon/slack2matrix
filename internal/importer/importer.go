@@ -44,6 +44,8 @@ type Importer struct {
 	ghostsMu    sync.Mutex
 	ghostsReady map[id.UserID]bool
 
+	uploads *uploads
+
 	// roomVersion is the homeserver's default, used for every created room.
 	roomVersion id.RoomVersion
 }
@@ -67,6 +69,7 @@ func New(ctx context.Context, cfg *config.Config, exp *slackexport.Export, dir *
 		profiles:    map[id.UserID]profile{},
 		ghostsReady: map[id.UserID]bool{},
 	}
+	imp.uploads = newUploads(imp)
 	imp.Tr = &transform.Transformer{
 		Conv: &convert.Converter{Resolver: imp, ServerName: cfg.Homeserver.ServerName},
 		Dir:  dir,
@@ -120,6 +123,9 @@ func (imp *Importer) Recipients() []id.UserID {
 
 // User implements convert.Resolver.
 func (imp *Importer) User(slackID string) *directory.Identity { return imp.Dir.User(slackID) }
+
+// FindUser implements convert.Resolver.
+func (imp *Importer) FindUser(ref string) *directory.Identity { return imp.Dir.Find(ref) }
 
 // Channel implements convert.Resolver.
 func (imp *Importer) Channel(slackID string) (string, id.RoomID) {
