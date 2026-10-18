@@ -271,6 +271,11 @@ event can't be decrypted, if any message was sent in plaintext, or if any
 
 ## Limitations
 
+- Custom emoji are included in a Slack export but not with their linked
+  images. As best I can tell, you would need access to the live Slack API
+  for your space in order to pull these down before migration. If anyone
+  is interested in implementing this, I'd be happy to incorporate into 
+  this tool.
 - Synapse ignores `?ts=` on room creation, so each room's creation event
   carries the import date. The history itself is timestamped correctly.
 - Room names, topics, membership and relation metadata (threads, reactions)
