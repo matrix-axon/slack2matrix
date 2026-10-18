@@ -69,12 +69,67 @@ never stores a plaintext copy of the history.
 - ImageMagick (`magick`) and ffmpeg (`ffmpeg`, `ffprobe`) on `PATH`.
 - A Synapse homeserver you administer.
 - An unpacked Slack export, with file downloads mirrored under
-  `<export>/media/files.slack.com/...`.
+  `<export>/media/files.slack.com/...` (see below).
 
 ```sh
 make build        # -> bin/slack2matrix
 make test
 ```
+
+### Downloading the files
+
+A Slack export contains only JSON. Every file object in it points to the
+content with a `url_private_download` URL, and that URL carries a token from
+the export (`?t=xoxe-…`), so it can be fetched without signing in. Fetch the
+files before importing.
+
+slack2matrix finds each file at `media_dir` (default `<export>/media`)
+followed by the URL without `https://`, kept verbatim. Percent escapes stay
+as they are, and the query string is part of the file name:
+
+```
+https://files.slack.com/files-pri/T0123-F0456/download/my%20photo.jpg?t=xoxe-…
+→ <export>/media/files.slack.com/files-pri/T0123-F0456/download/my%20photo.jpg?t=xoxe-…
+```
+
+This needs `jq` and `curl`. Run it from the export directory; it skips files
+already downloaded, so it can be re-run.
+
+```sh
+cd /path/to/slack-export
+# Every Slack-hosted file referenced by a message. Skip macOS "._" files,
+# deleted files (tombstones) and links to external services.
+find . -mindepth 2 -name '*.json' ! -name '.*' -not -path './media/*' -print0 |
+  xargs -0 jq -r '.[] | (.files[]?, .attachments[]?.files[]?)
+    | select(.mode != "tombstone" and .mode != "external")
+    | .url_private_download // .url_private // empty
+    | select(startswith("https://files.slack.com/"))' |
+  sort -u > file-urls.txt
+
+while IFS= read -r url; do
+  out="media/${url#https://}"
+  [ -s "$out" ] && continue
+  # -g: URLs can contain [ ] { }, which curl would otherwise treat as globs.
+  if ct=$(curl -fsSLg --create-dirs -o "$out" -w '%{content_type}' "$url"); then
+    case $ct in text/html*) echo "check (got a web page): $out" >&2 ;; esac
+  else
+    echo "failed: $url" >&2
+    rm -f "$out"
+  fi
+done < file-urls.txt
+```
+
+Then check what's still missing:
+
+```sh
+bin/slack2matrix plan -missing
+```
+
+The export's token may stop working after a while, or once the export is
+deleted. If downloads fail, or the "check" lines show Slack's sign-in page
+instead of the file, make a fresh export and run the script against it.
+Files that can't be fetched are imported as a "[file could not be imported:
+name]" notice.
 
 ## Runbook
 
@@ -221,7 +276,9 @@ event can't be decrypted, if any message was sent in plaintext, or if any
 - Room names, topics, membership and relation metadata (threads, reactions)
   are not end-to-end encrypted. This is inherent to Matrix.
 - Element Web can't search encrypted history; Element Desktop can, using its
-  local index.
+  local index. Another option is [Axon](https://github.com/matrix-axon/matrix.com)
+  which provides a full-text searchable index across multiple accounts, spaces,
+  and encrypted rooms.
 - Slack exports contain only the final text of edited messages and no reaction
   timestamps. `import.mark_edited` adds an "(edited)" marker.
 - The `SLACKIMPORT` devices must stay on the accounts. Deleting them makes
